@@ -173,6 +173,24 @@ int keyb(int keybr) {	//set keyboard to given brightness
 	return success;
 }
 
+int toggleLED(int bOn) {	//set keyboard to given brightness
+	static const char keyfile[] = "/sys/class/leds/z2:green:wifi/brightness";
+	FILE *key = fopen(keyfile, "w");
+	int success;
+	
+	if (key != NULL) {
+		char keybuf [5];
+//		itoa(keybr, keybuf, 10);
+		sprintf(keybuf, "%i", bOn==0?0:255);
+		fputs(keybuf, key);
+		fclose(key);
+		success = 1;
+	} else {
+	success = 0;
+	}
+	return success;
+}
+
 
 int getscr(void) {	//return current brightness of screen
 	static const char screenfile[] = "/sys/class/backlight/pwm-backlight.0/actual_brightness";
@@ -369,6 +387,10 @@ static int set_timer(timer_t timerid, unsigned int freq_msecs)
 
 volatile static int powerDown = 0;
 volatile static int suspend = 0;
+volatile static int newMsg = 0;
+volatile static int valkeyb = 0;
+volatile static int	flashKeyBrd = 0;
+
 
 void _powerDown(int sig)
 {
@@ -383,7 +405,15 @@ void _suspend(int sig)
 	suspend = 1;
 }
 
+void _newMsg(int sig)
+{
+	newMsg = 1;
+	flashKeyBrd = 1;
+}
 
+
+					
+					
 int main(int argc, char **argv) {
 	int lid = LID_UNKNOWN; 
 	int power = PWR_UNKNOWN;
@@ -402,20 +432,47 @@ int main(int argc, char **argv) {
 	lcd_timerid = create_timer(LCD_TIMER, LCD_TIMEOUT);
 	power_timerid = create_timer(POWER_TIMER, 0);
 
-	signal(SIGUSR1, _powerDown);
-	signal(SIGUSR2, _suspend);
+	signal(SIGQUIT, _powerDown);
+	signal(SIGINT, _suspend);
+	signal(SIGUSR1, _newMsg);
 
 	while(1) {		//main loop
 			
-		if(!power && GetKeyPressed() == 1) //if there is power the timers are not active, so nothing needs to be done
+		if( (!power || newMsg) && GetKeyPressed() == 1) //if there is power the timers are not active, so nothing needs to be done
 		{	
+			if(!power){
 			//a key has been pressed -- reset the timers
-			set_timer(keys_timerid, KEYS_TIMEOUT);
-			set_timer(lcd_timerid, LCD_TIMEOUT);
+				set_timer(keys_timerid, KEYS_TIMEOUT);
+				set_timer(lcd_timerid, LCD_TIMEOUT);
 			
-			screenOn();
+				screenOn();
+			}
+			
+			if(newMsg && valkeyb){
+				//stop flashing the keyboard
+				keyb(valkeyb);
+				toggleLED(0);
+				valkeyb = 0;
+				newMsg = 0;
+			}
 		}
 
+		if(newMsg){
+			if(!valkeyb)
+				valkeyb = getkeyb();
+			
+			toggleLED(flashKeyBrd);
+			
+			if(flashKeyBrd){
+				keyb(valkeyb);
+				flashKeyBrd=0;
+			}
+			else{
+				keyb(0);
+				flashKeyBrd=1;
+			}
+		}
+		
 		if(powerDown && !suspend)
 		{
 			set_timer(power_timerid, POWER_TIMEOUT);
